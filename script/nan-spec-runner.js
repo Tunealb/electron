@@ -18,7 +18,8 @@ const args = require('minimist')(process.argv.slice(2), {
 });
 
 async function main () {
-  const nodeDir = path.resolve(BASE, `out/${utils.getOutDir({ shouldLog: true })}/gen/node_headers`);
+  const outDir = utils.getOutDir({ shouldLog: true });
+  const nodeDir = path.resolve(BASE, `out/${outDir}/gen/node_headers`);
   const env = Object.assign({}, process.env, {
     npm_config_nodedir: nodeDir,
     npm_config_msvs_version: '2019',
@@ -26,37 +27,34 @@ async function main () {
     npm_config_yes: 'true'
   });
 
-  const clangDir = path.resolve(BASE, 'third_party', 'llvm-build', 'Release+Asserts', 'bin');
-  const cc = path.resolve(clangDir, 'clang');
-  const cxx = path.resolve(clangDir, 'clang++');
-  const ld = path.resolve(clangDir, 'lld');
+  // We want to force usage of libc++ on Linux (instead of libstdc++) owing to an incompatibility
+  // between libc++/libstdc++ that was causing test failures. macOS uses libc++ by default.
+  if (process.platform === 'darwin') {
+    env.CFLAGS = '-std=c++17';
+    env.CXXFLAGS = '-std=c++17';
+  } else if (process.platform === 'linux') {
+    const cxxflags = [
+      '-std=c++17',
+      '-nostdinc++',
+      `-isystem"${path.resolve(BASE, 'buildtools', 'third_party', 'libc++')}"`,
+      `-isystem"${path.resolve(BASE, 'buildtools', 'third_party', 'libc++', 'trunk', 'include')}"`,
+      `-isystem"${path.resolve(BASE, 'buildtools', 'third_party', 'libc++abi', 'trunk', 'include')}"`,
+      '-fPIC'
+    ].join(' ');
 
-  // TODO(ckerr) this is cribbed from read obj/electron/electron_app.ninja.
-  // Maybe it would be better to have this script literally open up that
-  // file and pull cflags_cc from it instead of using bespoke code here?
-  // I think it's unlikely to work; but if it does, it would be more futureproof
-  const cxxflags = [
-    '-std=c++17',
-    '-nostdinc++',
-    `-isystem"${path.resolve(BASE, 'buildtools', 'third_party', 'libc++')}"`,
-    `-isystem"${path.resolve(BASE, 'buildtools', 'third_party', 'libc++', 'trunk', 'include')}"`,
-    `-isystem"${path.resolve(BASE, 'buildtools', 'third_party', 'libc++abi', 'trunk', 'include')}"`,
-    '-fPIC'
-  ].join(' ');
+    const ldflags = [
+      '-stdlib=libstdc++',
+      '-fuse-ld=lld',
+      `-L"${path.resolve(BASE, 'out', outDir, 'obj', 'buildtools', 'third_party', 'libc++abi')}"`,
+      `-L"${path.resolve(BASE, 'out', outDir, 'obj', 'buildtools', 'third_party', 'libc++')}"`
+    ].join(' ');
 
-  const ldflags = [
-    '-stdlib=libc++',
-    '-fuse-ld=lld',
-    `-L"${path.resolve(BASE, 'out', `${utils.getOutDir({ shouldLog: true })}`, 'obj', 'buildtools', 'third_party', 'libc++abi')}"`,
-    `-L"${path.resolve(BASE, 'out', `${utils.getOutDir({ shouldLog: true })}`, 'obj', 'buildtools', 'third_party', 'libc++')}"`,
-    '-lc++abi'
-  ].join(' ');
+    const clangDir = path.resolve(BASE, 'third_party', 'llvm-build', 'Release+Asserts', 'bin');
 
-  if (process.platform !== 'win32') {
-    env.CC = cc;
+    env.CC = path.resolve(clangDir, 'clang');
+    env.CXX = path.resolve(clangDir, 'clang++');
+    env.LD = path.resolve(clangDir, 'lld');
     env.CFLAGS = cxxflags;
-    env.CXX = cxx;
-    env.LD = ld;
     env.CXXFLAGS = cxxflags;
     env.LDFLAGS = ldflags;
   }
